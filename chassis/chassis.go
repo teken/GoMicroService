@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -30,12 +32,21 @@ func NewEventSourceChassis() *EventSourceChassis {
 	}
 }
 
+func (c *EventSourceChassis) ConfigureOpenTelemetryWithStdOut(serviceName string, attrs ...attribute.KeyValue) {
+	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
+	if err != nil {
+		log.Fatalf("creating stdout exporter: %v", err)
+	}
+	c.ConfigureOpenTelemetry(serviceName, exporter, attrs...)
+}
+
 func (c *EventSourceChassis) ConfigureOpenTelemetry(serviceName string, exp sdktrace.SpanExporter, attrs ...attribute.KeyValue) {
 	attrs = append(attrs, semconv.ServiceNameKey.String(serviceName))
 	currentResource := resource.NewWithAttributes(
 		semconv.SchemaURL,
 		attrs...,
 	)
+
 	c.traceProvider = sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(currentResource))
