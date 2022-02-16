@@ -3,12 +3,14 @@ package chassis
 import (
 	"context"
 	"fmt"
+	"github.com/pborman/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	"go.opentelemetry.io/otel/trace"
 	"log"
 	"os"
 	"os/signal"
@@ -16,58 +18,91 @@ import (
 )
 
 type EventSourceChassis struct {
+	Id            uuid.UUID
+	Communication *RabbitCommunication
 	Requests      *Requests
 	Events        *Events
-	traceProvider *sdktrace.TracerProvider
+	TraceProvider *sdktrace.TracerProvider
+
+	*ServiceInfo
 }
 
-func NewEventSourceChassis() *EventSourceChassis {
+type ServiceInfo struct {
+	displayName string
+	serviceName string
+}
+
+func NewEventSourceChassis(displayName string, serviceName string) *EventSourceChassis {
+	info := &ServiceInfo{
+		displayName,
+		serviceName,
+	}
+	com := &DefaultRabbitCommunication
+	serviceId := uuid.NewRandom()
 	return &EventSourceChassis{
+		Id:            serviceId,
+		Communication: com,
 		Requests: &Requests{
-			NewRequestManager(nil),
+			NewRequestManager(com, info, nil),
 		},
 		Events: &Events{
-			NewEventManager(nil),
+			NewEventManager(com, info, nil),
 		},
+		ServiceInfo: info,
 	}
 }
 
-func (c *EventSourceChassis) ConfigureOpenTelemetryWithStdOut(serviceName string, attrs ...attribute.KeyValue) {
+func (c *EventSourceChassis) ConfigureOpenTelemetryWithStdOut(attrs ...attribute.KeyValue) trace.Tracer {
 	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
 	if err != nil {
 		log.Fatalf("creating stdout exporter: %v", err)
 	}
-	c.ConfigureOpenTelemetry(serviceName, exporter, attrs...)
+	return c.ConfigureOpenTelemetry(exporter, attrs...)
 }
 
-func (c *EventSourceChassis) ConfigureOpenTelemetry(serviceName string, exp sdktrace.SpanExporter, attrs ...attribute.KeyValue) {
-	attrs = append(attrs, semconv.ServiceNameKey.String(serviceName))
+func (c *EventSourceChassis) ConfigureOpenTelemetry(exp sdktrace.SpanExporter, attrs ...attribute.KeyValue) trace.Tracer {
+	attrs = append(attrs, semconv.ServiceNameKey.String(c.serviceName))
 	currentResource := resource.NewWithAttributes(
 		semconv.SchemaURL,
 		attrs...,
 	)
 
-	c.traceProvider = sdktrace.NewTracerProvider(
+	c.TraceProvider = sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(currentResource))
 
-	otel.SetTracerProvider(c.traceProvider)
+	otel.SetTracerProvider(c.TraceProvider)
 
-	c.traceProvider.Tracer(serviceName)
+	return c.TraceProvider.Tracer(c.serviceName)
 }
 
-func (c *EventSourceChassis) ReadyAndServe(ctx context.Context) <-chan bool {
+func (c *EventSourceChassis) ReadyAndServe(ctx context.Context) (<-chan bool, error) {
 	done := make(chan bool, 1)
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		defer c.traceProvider.Shutdown(ctx)
+		defer c.TraceProvider.Shutdown(ctx)
 
 		sig := <-sigs
 		fmt.Println("Shutting Down: " + sig.String())
 		done <- true
 	}()
 
-	return done
+	err := c.Communication.Connect(true)
+	if err != nil {
+		return nil, err
+	}
+
+	err = c.Requests.Serve()
+	if err != nil {
+		return nil, err
+	}
+
+	err = c.Events.Serve()
+	if err != nil {
+		return nil, err
+	}
+
+	return done, nil
 }

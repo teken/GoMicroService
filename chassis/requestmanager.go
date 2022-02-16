@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/streadway/amqp"
 	"net/url"
 	"regexp"
 	"strings"
@@ -13,11 +14,14 @@ import (
 type RequestFunction func(requestContext RequestContext)
 type RequestContext context.Context
 type RequestManager struct {
+	communication *RabbitCommunication
+
 	registeredRequests  []RegisteredRequest
 	unhandledHandler    RequestFunction
 	requestPanicChannel chan RequestContext
 
-	options *RequestManagerOptions
+	options     *RequestManagerOptions
+	serviceInfo *ServiceInfo
 }
 
 type RequestManagerOptions struct {
@@ -36,20 +40,22 @@ type RegisteredRequest struct {
 	matcher *regexp.Regexp
 }
 
-func NewRequestManager(options *RequestManagerOptions) *RequestManager {
+func NewRequestManager(com *RabbitCommunication, info *ServiceInfo, options *RequestManagerOptions) *RequestManager {
 	if options == nil {
 		options = DefaultRequestManagerOptions
 	}
 	return &RequestManager{
+		com,
 		[]RegisteredRequest{},
 		nil,
 		make(chan RequestContext, options.requestPanicChannelSize),
 		options,
+		info,
 	}
 }
 
 func (rm *RequestManager) RegisterRequestHandler(path string, method string, action RequestFunction) error {
-	matcher, err := regexp.Compile(pathToRegex(path))
+	matcher, err := regexp.Compile(PathToRegex(path))
 	if err != nil {
 		return errors.New("Failed to compile path: " + err.Error())
 	}
@@ -65,7 +71,7 @@ func (rm *RequestManager) RegisterRequestHandler(path string, method string, act
 
 var segmentMatcher = regexp.MustCompile(`{([^/{}]+)}`)
 
-func pathToRegex(path string) string {
+func PathToRegex(path string) string {
 	regexPath := `^` + path + `(?:\?.*)?$`
 	t := segmentMatcher.FindAllStringSubmatch(path, -1)
 	for _, match := range t {
@@ -107,10 +113,12 @@ func (rm *RequestManager) RegisterUnhandledRequestHandler(action RequestFunction
 	rm.unhandledHandler = action
 }
 
-func (rm *RequestManager) NewRequest(path string, method string, payload []byte) error {
+func (rm *RequestManager) NewRequest(path string, method string, payload []byte, contentType string) error {
 	c := context.WithValue(context.Background(), "path", path)
 	c = context.WithValue(c, "method", method)
-	c = context.WithValue(c, "body", payload)
+	c = context.WithValue(c, "payload", payload)
+	c = context.WithValue(c, "payload-type", contentType)
+
 	var query url.Values
 	if strings.Contains(path, "?") {
 		parts := strings.Split(path, "?")
@@ -159,4 +167,53 @@ func (rm *RequestManager) NewRequest(path string, method string, payload []byte)
 		handler(finalC)
 	}()
 	return nil
+}
+
+func (rm *RequestManager) Serve() error {
+	ch, err := rm.communication.Connection.Channel()
+	if err != nil {
+		return err
+	}
+
+	err = ch.ExchangeDeclare("requests", "topic", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	q, err := ch.QueueDeclare("", false, false, true, false, nil)
+	if err != nil {
+		return err
+	}
+
+	err = ch.QueueBind(q.Name, "", "requests", false, nil)
+	if err != nil {
+		return err
+	}
+
+	msgs, err := ch.Consume(q.Name, "requests."+rm.serviceInfo.serviceName, true, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	go rm.consumeRabbit(msgs)
+
+	return nil
+}
+
+func (rm *RequestManager) consumeRabbit(msgs <-chan amqp.Delivery) {
+	for msg := range msgs {
+		path, exists := msg.Headers["request-path"].(string)
+		if !exists {
+			fmt.Println("EventManager: consumeRabbit: Path not provided")
+			continue
+		}
+		method, exists := msg.Headers["request-method"].(string)
+		if !exists {
+			fmt.Println("EventManager: consumeRabbit: Method not provided")
+			continue
+		}
+		if err := rm.NewRequest(path, method, msg.Body, msg.ContentType); err != nil {
+			fmt.Println("EventManager: consumeRabbit: " + err.Error())
+		}
+	}
 }

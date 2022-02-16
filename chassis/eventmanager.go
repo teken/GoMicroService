@@ -3,6 +3,7 @@ package chassis
 import (
 	"context"
 	"fmt"
+	"github.com/streadway/amqp"
 	"time"
 )
 
@@ -10,10 +11,13 @@ type EventFunction func(eventContext EventContext)
 type EventContext context.Context
 
 type EventManager struct {
+	communication *RabbitCommunication
+
 	registeredEvents  []RegisteredEvent
 	eventPanicChannel chan EventContext
 
-	options *EventManagerOptions
+	options     *EventManagerOptions
+	serviceInfo *ServiceInfo
 }
 
 type EventManagerOptions struct {
@@ -30,14 +34,16 @@ type RegisteredEvent struct {
 	action EventFunction
 }
 
-func NewEventManager(options *EventManagerOptions) *EventManager {
+func NewEventManager(com *RabbitCommunication, info *ServiceInfo, options *EventManagerOptions) *EventManager {
 	if options == nil {
 		options = DefaultEventManagerOptions
 	}
 	return &EventManager{
+		com,
 		[]RegisteredEvent{},
 		make(chan EventContext, options.eventPanicChannelSize),
 		options,
+		info,
 	}
 }
 
@@ -48,9 +54,11 @@ func (em *EventManager) Subscribe(id string, action EventFunction) {
 	})
 }
 
-func (em EventManager) NewEvent(id string, payload []byte) error {
-	c := context.WithValue(context.Background(), "id", id)
-	c = context.WithValue(c, "body", payload)
+func (em EventManager) NewEvent(id string, payload []byte, contentType string) error {
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "event-id", id)
+	ctx = context.WithValue(ctx, "payload", payload)
+	ctx = context.WithValue(ctx, "payload-type", contentType)
 
 	var handler EventFunction
 	for _, registered := range em.registeredEvents {
@@ -64,7 +72,7 @@ func (em EventManager) NewEvent(id string, payload []byte) error {
 		return nil
 	}
 
-	finalC, canFunc := context.WithTimeout(c, em.options.eventTimeOut)
+	finalC, canFunc := context.WithTimeout(ctx, em.options.eventTimeOut)
 
 	go func() {
 		defer func(context RequestContext) {
@@ -77,4 +85,48 @@ func (em EventManager) NewEvent(id string, payload []byte) error {
 		handler(finalC)
 	}()
 	return nil
+}
+
+func (em *EventManager) Serve() error {
+	ch, err := em.communication.Connection.Channel()
+	if err != nil {
+		return err
+	}
+
+	err = ch.ExchangeDeclare("events", "fanout", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	q, err := ch.QueueDeclare("", false, false, true, false, nil)
+	if err != nil {
+		return err
+	}
+
+	err = ch.QueueBind(q.Name, "", "events", false, nil)
+	if err != nil {
+		return err
+	}
+
+	msgs, err := ch.Consume(q.Name, "events."+em.serviceInfo.serviceName, true, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	go em.consumeRabbit(msgs)
+
+	return nil
+}
+
+func (em *EventManager) consumeRabbit(msgs <-chan amqp.Delivery) {
+	for msg := range msgs {
+		eventId, exists := msg.Headers["event-id"].(string)
+		if !exists {
+			fmt.Println("EventManager: consumeRabbit: Path not provided")
+			continue
+		}
+		if err := em.NewEvent(eventId, msg.Body, msg.ContentType); err != nil {
+			fmt.Println("EventManager: consumeRabbit: " + err.Error())
+		}
+	}
 }

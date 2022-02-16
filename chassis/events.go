@@ -11,3 +11,7 @@ func (e Events) Subscribe(id string, action EventFunction) {
 func (e Events) EventPanicChannel() <-chan EventContext {
 	return e.eventManager.eventPanicChannel
 }
+
+func (e Events) Serve() error {
+	return e.eventManager.Serve()
+}
