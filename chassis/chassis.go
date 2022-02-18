@@ -53,7 +53,7 @@ func NewEventSourceChassis(displayName string, serviceName string) *EventSourceC
 }
 
 func (c *EventSourceChassis) ConfigureOpenTelemetryWithStdOut(attrs ...attribute.KeyValue) trace.Tracer {
-	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
+	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint(), stdouttrace.WithWriter(os.Stdout))
 	if err != nil {
 		log.Fatalf("creating stdout exporter: %v", err)
 	}
@@ -104,5 +104,6 @@ func (c *EventSourceChassis) ReadyAndServe(ctx context.Context) (<-chan bool, er
 		return nil, err
 	}
 
+	fmt.Println("Listening...")
 	return done, nil
 }

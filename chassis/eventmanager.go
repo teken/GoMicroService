@@ -98,17 +98,19 @@ func (em *EventManager) Serve() error {
 		return err
 	}
 
-	q, err := ch.QueueDeclare("", false, false, true, false, nil)
+	serviceLabel := em.serviceInfo.serviceName + ".events"
+
+	q, err := ch.QueueDeclare(serviceLabel, false, false, true, false, nil)
 	if err != nil {
 		return err
 	}
 
-	err = ch.QueueBind(q.Name, "", "events", false, nil)
+	err = ch.QueueBind(q.Name, serviceLabel, "events", false, nil)
 	if err != nil {
 		return err
 	}
 
-	msgs, err := ch.Consume(q.Name, "events."+em.serviceInfo.serviceName, true, false, false, false, nil)
+	msgs, err := ch.Consume(q.Name, serviceLabel, true, false, false, false, nil)
 	if err != nil {
 		return err
 	}

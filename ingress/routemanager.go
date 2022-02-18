@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -16,7 +17,7 @@ type RouteManager struct {
 	serviceId            *uuid.UUID
 	communication        *chassis.RabbitCommunication
 	routes               []Route
-	outstandingResponses map[string]chan *RequestResponse
+	outstandingResponses map[string]chan *chassis.RequestResponse
 	serviceChannels      sync.Map
 }
 
@@ -25,7 +26,7 @@ func NewRouteManager(id *uuid.UUID, comm *chassis.RabbitCommunication) *RouteMan
 		id,
 		comm,
 		make([]Route, 0),
-		make(map[string]chan *RequestResponse),
+		make(map[string]chan *chassis.RequestResponse),
 		sync.Map{},
 	}
 }
@@ -56,28 +57,32 @@ func (r Route) ConnectRoute() error {
 		return err
 	}
 
-	q, err := chann.QueueDeclare(r.service, false, false, true, false, nil)
-	if err != nil {
-		return err
-	}
-
-	err = chann.QueueBind(q.Name, r.service, "requests", false, nil)
-	if err != nil {
-		return err
-	}
-
+	//q, err := chann.QueueDeclare(r.service, false, false, true, false, nil)
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//err = chann.QueueBind(q.Name, r.service, "requests", false, nil)
+	//if err != nil {
+	//	return err
+	//}
+	//
 	errChan := chann.NotifyClose(make(chan *amqp.Error))
 	go func() {
 		err, more := <-errChan
 		if more {
 			fmt.Println("Channel Closed due to: " + err.Reason)
+			err := r.ConnectRoute()
+			if err != nil {
+				fmt.Println("Channel reconnect failed: " + err.Error())
+			}
 		}
 	}()
 
 	return nil
 }
 
-func (r Route) SendRequest(req *http.Request) (<-chan *RequestResponse, error) {
+func (r Route) SendRequest(req *http.Request) (<-chan *chassis.RequestResponse, error) {
 	err := r.ConnectRoute()
 	if err != nil {
 		return nil, err
@@ -88,12 +93,18 @@ func (r Route) SendRequest(req *http.Request) (<-chan *RequestResponse, error) {
 		return nil, err
 	}
 
+	headers := amqp.Table{}
+	headers["request-path"] = req.URL.Path
+	headers["request-method"] = req.Method
+	headers["request-matched-path"] = r.path
+
 	correlationId := uuid.NewRandom().String()
 	chann, _ := r.routeManager.serviceChannels.Load(r.service)
-	err = chann.(*amqp.Channel).Publish("requests", r.service, false, false, amqp.Publishing{
+	err = chann.(*amqp.Channel).Publish("requests", r.service+".requests", false, false, amqp.Publishing{
 		MessageId:     uuid.NewRandom().String(),
 		ReplyTo:       "requests.responses." + r.routeManager.serviceId.String(),
 		CorrelationId: correlationId,
+		Headers:       headers,
 		DeliveryMode:  amqp.Persistent,
 		ContentType:   req.Header.Get("Content-Type"),
 		Body:          b,
@@ -105,23 +116,17 @@ func (r Route) SendRequest(req *http.Request) (<-chan *RequestResponse, error) {
 	return r.routeManager.AwaitResponseOfRequest(correlationId), err
 }
 
-type RequestResponse struct {
-	StatusCode  int
-	Body        []byte
-	ContentType string
-}
-
 func (rm *RouteManager) GetRoute(method string, path string) *Route {
 	for _, registered := range rm.routes {
-		if registered.method == method && registered.matcher.MatchString(path) {
+		if strings.EqualFold(registered.method, method) && registered.matcher.MatchString(path) {
 			return &registered
 		}
 	}
 	return nil
 }
 
-func (rm *RouteManager) AwaitResponseOfRequest(correlationId string) <-chan *RequestResponse {
-	responseChannel := make(chan *RequestResponse, 1)
+func (rm *RouteManager) AwaitResponseOfRequest(correlationId string) <-chan *chassis.RequestResponse {
+	responseChannel := make(chan *chassis.RequestResponse, 1)
 	rm.outstandingResponses[correlationId] = responseChannel
 
 	return responseChannel
@@ -144,7 +149,7 @@ func (rm *RouteManager) StartResponseListening() error {
 		return err
 	}
 
-	err = chann.QueueBind(q.Name, q.Name, "requests", false, nil)
+	err = chann.QueueBind(q.Name, q.Name, "requests.responses", false, nil)
 	if err != nil {
 		return err
 	}
@@ -165,10 +170,10 @@ func (rm *RouteManager) NewResponse(correlationId string, statusCode int, conten
 		return errors.New("responses channel does not exist")
 	}
 
-	resp := RequestResponse{
-		statusCode,
-		body,
-		contentType,
+	resp := chassis.RequestResponse{
+		StatusCode:  statusCode,
+		Body:        body,
+		ContentType: contentType,
 	}
 
 	respChan <- &resp
@@ -186,4 +191,25 @@ func (rm *RouteManager) consumeResponses(msgs <-chan amqp.Delivery) {
 			fmt.Println("RouteManager: consumeResponses: " + err.Error())
 		}
 	}
+}
+
+func (rm *RouteManager) AddRoute(method string, path string, service string) error {
+	for _, route := range rm.routes {
+		if route.path == path && route.method == method {
+			return errors.New("already existing route for " + method + ":" + path)
+		}
+	}
+
+	compPath, err := regexp.Compile(chassis.PathToRegex(path))
+	if err != nil {
+		return err
+	}
+	rm.routes = append(rm.routes, Route{
+		rm,
+		path,
+		method,
+		service,
+		compPath,
+	})
+	return nil
 }

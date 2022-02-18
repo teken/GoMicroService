@@ -7,12 +7,13 @@ import (
 )
 
 func main() {
-	c := chassis.NewEventSourceChassis("Product Service", "product_service")
+	c := chassis.NewEventSourceChassis("Product Service", "products_service")
 	tracer := c.ConfigureOpenTelemetryWithStdOut()
 	ctx := context.Background()
 	tracer.Start(ctx, "main")
 
 	r := requests{}
+	c.Requests.Get("/products", r.GetAll)
 	c.Requests.Get("/products/{id:uuid}", r.Get)
 	c.Requests.Post("/products", r.Create)
 	c.Requests.Put("/products/{id:uuid}", r.Update)

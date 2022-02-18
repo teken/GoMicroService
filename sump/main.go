@@ -49,6 +49,6 @@ func main() {
 
 func consumeRabbit(msgs <-chan amqp.Delivery) {
 	for msg := range msgs {
-
+		fmt.Println(msg.MessageId)
 	}
 }

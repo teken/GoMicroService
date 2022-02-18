@@ -15,7 +15,7 @@ var DefaultRabbitCommunication = RabbitCommunication{
 	address: "amqp://guest:guest@localhost:5672/",
 }
 
-func (c RabbitCommunication) Connect(enableConnectionRecovery bool) error {
+func (c *RabbitCommunication) Connect(enableConnectionRecovery bool) error {
 	conn, err := amqp.Dial(c.address)
 	if err != nil {
 		return err
@@ -30,7 +30,7 @@ func (c RabbitCommunication) Connect(enableConnectionRecovery bool) error {
 	return nil
 }
 
-func (c RabbitCommunication) EnableConnectionRecovery() error {
+func (c *RabbitCommunication) EnableConnectionRecovery() error {
 	if c.Connection == nil {
 		return errors.New("connection not initialised")
 	}

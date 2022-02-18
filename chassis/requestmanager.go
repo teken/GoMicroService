@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-type RequestFunction func(requestContext RequestContext)
+type RequestFunction func(requestContext RequestContext) RequestResponse
 type RequestContext context.Context
 type RequestManager struct {
 	communication *RabbitCommunication
@@ -20,8 +20,9 @@ type RequestManager struct {
 	unhandledHandler    RequestFunction
 	requestPanicChannel chan RequestContext
 
-	options     *RequestManagerOptions
-	serviceInfo *ServiceInfo
+	options              *RequestManagerOptions
+	serviceInfo          *ServiceInfo
+	requestRabbitChannel *amqp.Channel
 }
 
 type RequestManagerOptions struct {
@@ -51,6 +52,7 @@ func NewRequestManager(com *RabbitCommunication, info *ServiceInfo, options *Req
 		make(chan RequestContext, options.requestPanicChannelSize),
 		options,
 		info,
+		nil,
 	}
 }
 
@@ -113,7 +115,11 @@ func (rm *RequestManager) RegisterUnhandledRequestHandler(action RequestFunction
 	rm.unhandledHandler = action
 }
 
-func (rm *RequestManager) NewRequest(path string, method string, payload []byte, contentType string) error {
+func (rm *RequestManager) NewResponse(resp *RequestResponse) {
+
+}
+
+func (rm *RequestManager) NewRequest(path string, method string, payload []byte, contentType string, correlationId string, replyAddress string) error {
 	c := context.WithValue(context.Background(), "path", path)
 	c = context.WithValue(c, "method", method)
 	c = context.WithValue(c, "payload", payload)
@@ -164,38 +170,67 @@ func (rm *RequestManager) NewRequest(path string, method string, payload []byte,
 			}
 		}(finalC)
 		defer canFunc()
-		handler(finalC)
+		resp := handler(finalC)
+
+		headers := amqp.Table{}
+		headers["status-code"] = resp.StatusCode
+		err := rm.requestRabbitChannel.Publish("requests.responses", replyAddress, false, false, amqp.Publishing{
+			ContentType:   resp.ContentType,
+			CorrelationId: correlationId,
+			ReplyTo:       replyAddress,
+			Body:          resp.Body,
+			Headers:       headers,
+		})
+
+		if err != nil {
+			fmt.Println("Failed to return message: " + err.Error())
+		}
 	}()
 	return nil
 }
 
 func (rm *RequestManager) Serve() error {
-	ch, err := rm.communication.Connection.Channel()
+	var err error
+	rm.requestRabbitChannel, err = rm.communication.Connection.Channel()
 	if err != nil {
 		return err
 	}
 
-	err = ch.ExchangeDeclare("requests", "topic", false, false, false, false, nil)
+	err = rm.requestRabbitChannel.ExchangeDeclare("requests", "topic", false, false, false, false, nil)
 	if err != nil {
 		return err
 	}
 
-	q, err := ch.QueueDeclare("", false, false, true, false, nil)
+	serviceLabel := rm.serviceInfo.serviceName + ".requests"
+
+	q, err := rm.requestRabbitChannel.QueueDeclare(serviceLabel, false, false, true, false, nil)
 	if err != nil {
 		return err
 	}
 
-	err = ch.QueueBind(q.Name, "", "requests", false, nil)
+	err = rm.requestRabbitChannel.QueueBind(q.Name, serviceLabel, "requests", false, nil)
 	if err != nil {
 		return err
 	}
 
-	msgs, err := ch.Consume(q.Name, "requests."+rm.serviceInfo.serviceName, true, false, false, false, nil)
+	msgs, err := rm.requestRabbitChannel.Consume(q.Name, serviceLabel, true, false, false, false, nil)
 	if err != nil {
 		return err
 	}
 
 	go rm.consumeRabbit(msgs)
+
+	errChan := rm.requestRabbitChannel.NotifyClose(make(chan *amqp.Error))
+	go func() {
+		err, more := <-errChan
+		if more {
+			fmt.Println("Channel Closed due to: " + err.Reason)
+			err := rm.Serve()
+			if err != nil {
+				fmt.Println("Channel reconnect failed: " + err.Error())
+			}
+		}
+	}()
 
 	return nil
 }
@@ -212,7 +247,7 @@ func (rm *RequestManager) consumeRabbit(msgs <-chan amqp.Delivery) {
 			fmt.Println("EventManager: consumeRabbit: Method not provided")
 			continue
 		}
-		if err := rm.NewRequest(path, method, msg.Body, msg.ContentType); err != nil {
+		if err := rm.NewRequest(path, method, msg.Body, msg.ContentType, msg.CorrelationId, msg.ReplyTo); err != nil {
 			fmt.Println("EventManager: consumeRabbit: " + err.Error())
 		}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"google.golang.org/protobuf/proto"
 )
 
 type MessageContext[T any] struct {
@@ -31,35 +30,35 @@ func (r MessageContext[T]) PayloadType() string {
 	return r.Value("payload-type").(string)
 }
 
-func (r MessageContext[T]) FromBody() (T, error) {
+func (r MessageContext[T]) FromBody() (*T, error) {
 	switch r.PayloadType() {
-	case "application/x-protobuf":
-		return r.FromProto()
+	//case "application/x-protobuf":
+	//	return r.FromProto()
 	case "application/json":
 		return r.FromJson()
 	}
-	return nil, errors.New("unknown mime type: " + r.PayloadType())
+	return new(T), errors.New("unknown mime type: " + r.PayloadType())
 }
 
-func (r MessageContext[T]) FromJson() (T, error) {
+func (r MessageContext[T]) FromJson() (*T, error) {
 	payload := r.Value("payload").([]byte)
-	content := T{}
+	content := new(T)
 	err := json.Unmarshal(payload, content)
 	if err != nil {
-		return nil, err
+		return content, err
 	}
 	return content, nil
 }
 
-func (r MessageContext[T]) FromProto() (T, error) {
-	payload := r.Value("payload").([]byte)
-	content := T{}
-	err := proto.Unmarshal(payload, content)
-	if err != nil {
-		return nil, err
-	}
-	return content, nil
-}
+//func (r MessageContext[T]) FromProto() (*T, error) {
+//	payload := r.Value("payload").([]byte)
+//	content := new(T)
+//	err := proto.Unmarshal(payload, content)
+//	if err != nil {
+//		return content, err
+//	}
+//	return content, nil
+//}
 
 func FromContext[T any](ctx context.Context) MessageContext[T] {
 	return MessageContext[T]{
