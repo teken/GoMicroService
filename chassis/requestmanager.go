@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-type RequestFunction func(requestContext RequestContext) RequestResponse
-type RequestContext context.Context
+type RequestFunction func(requestContext *RequestContext) RequestResponse
+
 type RequestManager struct {
 	communication *RabbitCommunication
 
 	registeredRequests  []RegisteredRequest
 	unhandledHandler    RequestFunction
-	requestPanicChannel chan RequestContext
+	requestPanicChannel chan *RequestContext
 
 	options              *RequestManagerOptions
 	serviceInfo          *ServiceInfo
@@ -49,7 +49,7 @@ func NewRequestManager(com *RabbitCommunication, info *ServiceInfo, options *Req
 		com,
 		[]RegisteredRequest{},
 		nil,
-		make(chan RequestContext, options.requestPanicChannelSize),
+		make(chan *RequestContext, options.requestPanicChannelSize),
 		options,
 		info,
 		nil,
@@ -115,10 +115,6 @@ func (rm *RequestManager) RegisterUnhandledRequestHandler(action RequestFunction
 	rm.unhandledHandler = action
 }
 
-func (rm *RequestManager) NewResponse(resp *RequestResponse) {
-
-}
-
 func (rm *RequestManager) NewRequest(path string, method string, payload []byte, contentType string, correlationId string, replyAddress string) error {
 	c := context.WithValue(context.Background(), "path", path)
 	c = context.WithValue(c, "method", method)
@@ -163,14 +159,16 @@ func (rm *RequestManager) NewRequest(path string, method string, payload []byte,
 	finalC, canFunc := context.WithTimeout(c, rm.options.requestTimeOut)
 
 	go func() {
-		defer func(context RequestContext) {
+		rctx := NewRequestContext(finalC)
+
+		defer func(context *RequestContext) {
 			if r := recover(); r != nil {
 				rm.requestPanicChannel <- context
 				fmt.Println("Recovering from panic:", r)
 			}
-		}(finalC)
+		}(rctx)
 		defer canFunc()
-		resp := handler(finalC)
+		resp := handler(rctx)
 
 		headers := amqp.Table{}
 		headers["status-code"] = resp.StatusCode

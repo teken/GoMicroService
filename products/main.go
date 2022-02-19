@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/asdine/storm/v3"
 	"github.com/teken/GoMicroService/chassis"
 )
 
@@ -12,7 +13,13 @@ func main() {
 	ctx := context.Background()
 	tracer.Start(ctx, "main")
 
-	r := requests{}
+	db, err := storm.Open("products.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	r := requestHandlers{db}
 	c.Requests.Get("/products", r.GetAll)
 	c.Requests.Get("/products/{id:uuid}", r.Get)
 	c.Requests.Post("/products", r.Create)

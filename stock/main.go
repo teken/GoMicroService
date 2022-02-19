@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/asdine/storm/v3"
 	"github.com/teken/GoMicroService/chassis"
 	orderEvents "github.com/teken/GoMicroService/orders/events"
 	productEvents "github.com/teken/GoMicroService/products/events"
@@ -14,12 +15,18 @@ func main() {
 	ctx := context.Background()
 	tracer.Start(ctx, "main")
 
-	r := requests{}
+	db, err := storm.Open("stock.db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	r := requestHandlers{db}
 	c.Requests.Get("/products/{id:uuid}/stock", r.Get)
 	c.Requests.Put("/products/{id:uuid}/stock", r.Update)
 	c.Requests.Unhandled(r.Unhandled)
 
-	e := events{}
+	e := eventHandlers{db}
 	c.Events.Subscribe(orderEvents.OrderCreated, e.orderCreated)
 	c.Events.Subscribe(orderEvents.OrderCancelled, e.orderCancelled)
 	c.Events.Subscribe(orderEvents.OrderCompleted, e.orderCompleted)

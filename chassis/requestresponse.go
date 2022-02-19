@@ -8,7 +8,9 @@ type RequestResponse struct {
 	ContentType string
 }
 
-var BlankRequestResponse = RequestResponse{}
+var NotImplementedResponse = StatusCodeResponse(501)
+var NotFoundResponse = StatusCodeResponse(404)
+var OkResponse = StatusCodeResponse(200)
 
 func JsonResponse[T any](model T, code int) (RequestResponse, error) {
 	body, err := json.Marshal(model)
@@ -28,4 +30,12 @@ func StatusCodeResponse(code int) RequestResponse {
 	return RequestResponse{
 		StatusCode: code,
 	}
+}
+
+func ErrorResponse(code int, message string) RequestResponse {
+	err := struct {
+		Message string `json:"message"`
+	}{message}
+	resp, _ := JsonResponse(err, 500)
+	return resp
 }

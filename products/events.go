@@ -1,3 +1,3 @@
 package main
 
-type events struct{}
+type eventHandlers struct{}

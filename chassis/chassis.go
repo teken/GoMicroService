@@ -39,14 +39,17 @@ func NewEventSourceChassis(displayName string, serviceName string) *EventSourceC
 	}
 	com := &DefaultRabbitCommunication
 	serviceId := uuid.NewRandom()
+	requestManager := NewRequestManager(com, info, nil)
+	eventManager := NewEventManager(com, info, nil)
+
 	return &EventSourceChassis{
 		Id:            serviceId,
 		Communication: com,
 		Requests: &Requests{
-			NewRequestManager(com, info, nil),
+			requestManager,
 		},
 		Events: &Events{
-			NewEventManager(com, info, nil),
+			eventManager,
 		},
 		ServiceInfo: info,
 	}

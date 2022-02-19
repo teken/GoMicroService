@@ -1,52 +1,157 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/asdine/storm/v3"
 	"github.com/teken/GoMicroService/chassis"
+	"github.com/teken/GoMicroService/products/events"
+	"strconv"
 )
 
-type requests struct {
+type requestHandlers struct {
+	db *storm.DB
 }
 
-type test struct {
-	Test1 string `json:"test_1"`
-	Test2 int    `json:"test_2"`
-	Test3 test2  `json:"test_3"`
-}
-type test2 struct {
-	Testtest1 string `json:"testtest_1"`
-	Testtest2 int    `json:"testtest_2"`
-}
+func (h requestHandlers) GetAll(ctx *chassis.RequestContext) chassis.RequestResponse {
+	products := make([]Product, 1)
 
-func (h requests) GetAll(chassis.RequestContext) chassis.RequestResponse {
-	t := test{
-		Test1: "test1",
-		Test2: 2,
-		Test3: test2{Testtest1: "testtest1", Testtest2: 2},
+	pageNumber, err := strconv.Atoi(ctx.QueryParamWithDefault("page", "1"))
+	if err != nil {
+		fmt.Println("Failed to page number" + err.Error())
+		pageNumber = 1
 	}
-	y, _ := json.Marshal(t)
-	fmt.Println(string(y[:]), t)
-	resp, err := chassis.JsonResponse(t, 200)
+
+	err = h.db.All(products, storm.Limit(100), storm.Skip((pageNumber-1)*100))
+	if err != nil {
+		fmt.Println("Failed to GetAll Products" + err.Error())
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	resp, err := chassis.JsonResponse(products, 200)
 	if err != nil {
 		fmt.Println(err)
 		return chassis.StatusCodeResponse(500)
 	}
 	return resp
 }
-func (h requests) Get(chassis.RequestContext) chassis.RequestResponse {
-	return chassis.BlankRequestResponse
+func (h requestHandlers) Get(ctx *chassis.RequestContext) chassis.RequestResponse {
+	product := new(Product)
+
+	referenceId := ctx.UrlParam("id")
+
+	err := h.db.One("reference_id", referenceId, product)
+	if err != nil {
+		fmt.Println("Failed to Get Product" + err.Error())
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	resp, err := chassis.JsonResponse(product, 200)
+	if err != nil {
+		fmt.Println(err)
+		return chassis.StatusCodeResponse(500)
+	}
+	return resp
 }
-func (h requests) Create(chassis.RequestContext) chassis.RequestResponse {
-	return chassis.BlankRequestResponse
+func (h requestHandlers) Create(ctx *chassis.RequestContext) chassis.RequestResponse {
+	product := new(Product)
+	err := ctx.FromJson(product)
+	if err != nil {
+		fmt.Println("Failed to parse Product from body:" + err.Error())
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	err = h.db.Save(&product)
+	if err != nil {
+		fmt.Println("Unable to save product")
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	err = chassis.SendJsonEvent(ctx.UserId(), events.ProductCreated, product)
+	if err != nil {
+		fmt.Println("Unable to send create product event")
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	return chassis.OkResponse
 }
-func (h requests) Update(chassis.RequestContext) chassis.RequestResponse {
-	return chassis.BlankRequestResponse
+func (h requestHandlers) BulkCreate(ctx *chassis.RequestContext) chassis.RequestResponse {
+	products := make([]Product, 1)
+	err := ctx.FromJson(products)
+	if err != nil {
+		fmt.Println("Failed to parse []Product from body:" + err.Error())
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	for _, product := range products {
+		err = h.db.Save(&product)
+		if err != nil {
+			fmt.Println("Unable to save product")
+		}
+
+		err = chassis.SendJsonEvent(ctx.UserId(), events.ProductCreated, product)
+		if err != nil {
+			fmt.Println("Unable to send create product event")
+		}
+	}
+	if err != nil {
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	return chassis.OkResponse
 }
-func (h requests) Delete(chassis.RequestContext) chassis.RequestResponse {
-	return chassis.BlankRequestResponse
+func (h requestHandlers) Update(ctx *chassis.RequestContext) chassis.RequestResponse {
+	product := new(Product)
+
+	referenceId := ctx.UrlParam("id")
+
+	err := h.db.One("reference_id", referenceId, product)
+	if err != nil {
+		fmt.Println("Failed to Get Product for update" + err.Error())
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	product.ReferenceId = referenceId
+
+	err = h.db.Update(product)
+	if err != nil {
+		fmt.Println("Failed to Update Product:" + err.Error())
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	err = chassis.SendJsonEvent(ctx.UserId(), events.ProductUpdated, product)
+	if err != nil {
+		fmt.Println("Unable to send delete product event")
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	return chassis.OkResponse
+}
+func (h requestHandlers) Delete(ctx *chassis.RequestContext) chassis.RequestResponse {
+	product := new(Product)
+
+	referenceId := ctx.UrlParam("id")
+
+	err := h.db.One("reference_id", referenceId, product)
+	if err != nil {
+		fmt.Println("Failed to Get Product for deletion:" + err.Error())
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	err = h.db.DeleteStruct(product)
+	if err != nil {
+		fmt.Println("Failed to Delete Product:" + err.Error())
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	err = chassis.SendJsonEvent(ctx.UserId(), events.ProductDeleted, product)
+	if err != nil {
+		fmt.Println("Unable to send delete product event")
+		return chassis.ErrorResponse(500, "Internal Server Error")
+	}
+
+	return chassis.OkResponse
 }
 
-func (h requests) Unhandled(chassis.RequestContext) chassis.RequestResponse {
-	return chassis.BlankRequestResponse
+func (h requestHandlers) Unhandled(*chassis.RequestContext) chassis.RequestResponse {
+	return chassis.NotFoundResponse
 }

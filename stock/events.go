@@ -1,25 +1,20 @@
 package main
 
-import "github.com/teken/GoMicroService/chassis"
+import (
+	"github.com/asdine/storm/v3"
+	"github.com/teken/GoMicroService/chassis"
+)
 
-type events struct{}
-
-func (e events) orderCreated(context chassis.EventContext) {
-
+type eventHandlers struct {
+	db *storm.DB
 }
 
-func (e events) orderCancelled(context chassis.EventContext) {
+func (e eventHandlers) orderCreated(*chassis.EventContext) {}
 
-}
+func (e eventHandlers) orderCancelled(*chassis.EventContext) {}
 
-func (e events) orderCompleted(context chassis.EventContext) {
+func (e eventHandlers) orderCompleted(*chassis.EventContext) {}
 
-}
+func (e eventHandlers) productCreated(*chassis.EventContext) {}
 
-func (e events) productCreated(context chassis.EventContext) {
-
-}
-
-func (e events) productDeleted(context chassis.EventContext) {
-
-}
+func (e eventHandlers) productDeleted(*chassis.EventContext) {}

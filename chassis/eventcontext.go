@@ -5,27 +5,27 @@ import (
 	"encoding/json"
 )
 
-type MessageContext[T any] struct {
+type EventContext struct {
 	context.Context
 }
 
-func (r MessageContext[T]) EventId() string {
+func (r EventContext) EventId() string {
 	return r.Value("event-id").(string)
 }
 
-func (r MessageContext[T]) SourceUserId() string {
+func (r EventContext) SourceUserId() string {
 	return r.Value("source-user-id").(string)
 }
 
-func (r MessageContext[T]) Payload() []byte {
+func (r EventContext) Payload() []byte {
 	return r.Value("payload").([]byte)
 }
 
-func (r MessageContext[T]) PayloadType() string {
+func (r EventContext) PayloadType() string {
 	return r.Value("payload-type").(string)
 }
 
-func (r MessageContext[T]) FromJson() (*T, error) {
+func (r EventContext[T]) FromJson() (*T, error) {
 	payload := r.Value("payload").([]byte)
 	content := new(T)
 	err := json.Unmarshal(payload, content)
@@ -35,8 +35,8 @@ func (r MessageContext[T]) FromJson() (*T, error) {
 	return content, nil
 }
 
-func FromContext[T any](ctx context.Context) MessageContext[T] {
-	return MessageContext[T]{
+func NewEventContext(ctx context.Context) *EventContext {
+	return &EventContext{
 		ctx,
 	}
 }

@@ -2,12 +2,22 @@ package main
 
 import "github.com/teken/GoMicroService/chassis"
 
-type requests struct {
+type requestHandlers struct {
 }
 
-func (h requests) Get(chassis.RequestContext)    {}
-func (h requests) Create(chassis.RequestContext) {}
-func (h requests) Update(chassis.RequestContext) {}
-func (h requests) Delete(chassis.RequestContext) {}
+func (h requestHandlers) Get(*chassis.RequestContext) chassis.RequestResponse {
+	return chassis.NotImplementedResponse
+}
+func (h requestHandlers) Create(*chassis.RequestContext) chassis.RequestResponse {
+	return chassis.NotImplementedResponse
+}
+func (h requestHandlers) Update(*chassis.RequestContext) chassis.RequestResponse {
+	return chassis.NotImplementedResponse
+}
+func (h requestHandlers) Delete(*chassis.RequestContext) chassis.RequestResponse {
+	return chassis.NotImplementedResponse
+}
 
-func (h requests) Unhandled(chassis.RequestContext) {}
+func (h requestHandlers) Unhandled(*chassis.RequestContext) chassis.RequestResponse {
+	return chassis.NotImplementedResponse
+}

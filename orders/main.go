@@ -12,7 +12,7 @@ func main() {
 	ctx := context.Background()
 	tracer.Start(ctx, "main")
 
-	r := requests{}
+	r := requestHandlers{}
 	c.Requests.Unhandled(r.Unhandled)
 
 	if ready, err := c.ReadyAndServe(ctx); err != nil {
