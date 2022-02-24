@@ -38,7 +38,7 @@ func (r Requests) Unhandled(action RequestFunction) {
 	r.requestManager.RegisterUnhandledRequestHandler(action)
 }
 
-func (r Requests) RequestPanicChannel() <-chan RequestContext {
+func (r Requests) RequestPanicChannel() <-chan *RequestContext {
 	return r.requestManager.requestPanicChannel
 }
 

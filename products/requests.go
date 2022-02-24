@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/asdine/storm/v3"
+	"github.com/pborman/uuid"
 	"github.com/teken/GoMicroService/chassis"
 	"github.com/teken/GoMicroService/products/events"
 	"strconv"
@@ -41,6 +42,9 @@ func (h requestHandlers) Get(ctx *chassis.RequestContext) chassis.RequestRespons
 
 	err := h.db.One("reference_id", referenceId, product)
 	if err != nil {
+		if err == storm.ErrNotFound {
+			return chassis.NotFoundResponse
+		}
 		fmt.Println("Failed to Get Product" + err.Error())
 		return chassis.ErrorResponse(500, "Internal Server Error")
 	}
@@ -60,6 +64,7 @@ func (h requestHandlers) Create(ctx *chassis.RequestContext) chassis.RequestResp
 		return chassis.ErrorResponse(500, "Internal Server Error")
 	}
 
+	product.ReferenceId = uuid.NewRandom().String()
 	err = h.db.Save(&product)
 	if err != nil {
 		fmt.Println("Unable to save product")
@@ -72,7 +77,12 @@ func (h requestHandlers) Create(ctx *chassis.RequestContext) chassis.RequestResp
 		return chassis.ErrorResponse(500, "Internal Server Error")
 	}
 
-	return chassis.OkResponse
+	resp, err := chassis.JsonResponse(product, 200)
+	if err != nil {
+		fmt.Println(err)
+		return chassis.StatusCodeResponse(500)
+	}
+	return resp
 }
 func (h requestHandlers) BulkCreate(ctx *chassis.RequestContext) chassis.RequestResponse {
 	products := make([]Product, 1)
@@ -82,9 +92,14 @@ func (h requestHandlers) BulkCreate(ctx *chassis.RequestContext) chassis.Request
 		return chassis.ErrorResponse(500, "Internal Server Error")
 	}
 
-	for _, product := range products {
+	newIds := make([]string, len(products))
+	for i, product := range products {
+		newId := uuid.NewRandom().String()
+		newIds[i] = newId
+		product.ReferenceId = newId
 		err = h.db.Save(&product)
 		if err != nil {
+			newIds[i] = ""
 			fmt.Println("Unable to save product")
 		}
 
@@ -97,7 +112,12 @@ func (h requestHandlers) BulkCreate(ctx *chassis.RequestContext) chassis.Request
 		return chassis.ErrorResponse(500, "Internal Server Error")
 	}
 
-	return chassis.OkResponse
+	resp, err := chassis.JsonResponse(newIds, 200)
+	if err != nil {
+		fmt.Println(err)
+		return chassis.StatusCodeResponse(500)
+	}
+	return resp
 }
 func (h requestHandlers) Update(ctx *chassis.RequestContext) chassis.RequestResponse {
 	product := new(Product)
@@ -106,6 +126,9 @@ func (h requestHandlers) Update(ctx *chassis.RequestContext) chassis.RequestResp
 
 	err := h.db.One("reference_id", referenceId, product)
 	if err != nil {
+		if err == storm.ErrNotFound {
+			return chassis.NotFoundResponse
+		}
 		fmt.Println("Failed to Get Product for update" + err.Error())
 		return chassis.ErrorResponse(500, "Internal Server Error")
 	}
@@ -133,6 +156,9 @@ func (h requestHandlers) Delete(ctx *chassis.RequestContext) chassis.RequestResp
 
 	err := h.db.One("reference_id", referenceId, product)
 	if err != nil {
+		if err == storm.ErrNotFound {
+			return chassis.NotFoundResponse
+		}
 		fmt.Println("Failed to Get Product for deletion:" + err.Error())
 		return chassis.ErrorResponse(500, "Internal Server Error")
 	}

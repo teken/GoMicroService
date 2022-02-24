@@ -56,17 +56,7 @@ func (r Route) ConnectRoute() error {
 	if err != nil {
 		return err
 	}
-
-	//q, err := chann.QueueDeclare(r.service, false, false, true, false, nil)
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//err = chann.QueueBind(q.Name, r.service, "requests", false, nil)
-	//if err != nil {
-	//	return err
-	//}
-	//
+	
 	errChan := chann.NotifyClose(make(chan *amqp.Error))
 	go func() {
 		err, more := <-errChan
