@@ -56,7 +56,7 @@ func (r Route) ConnectRoute() error {
 	if err != nil {
 		return err
 	}
-	
+
 	errChan := chann.NotifyClose(make(chan *amqp.Error))
 	go func() {
 		err, more := <-errChan
